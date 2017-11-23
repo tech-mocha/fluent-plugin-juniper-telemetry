@@ -3,14 +3,14 @@ lib = File.expand_path('../lib', __FILE__)
 $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 
 Gem::Specification.new do |s|
-  s.name          = "fluent-plugin-juniper-telemetry"
-  s.version       = '0.3.0'
-  s.authors       = ["Damien Garros"]
-  s.email         = ["dgarros@gmail.com"]
+  s.name          = "fluent-plugin-juniper-telemetry_tech-mocha"
+  s.version       = '0.4.0'
+  s.authors       = ["Tech Mocha"]
+  s.email         = ["jag@openeye.ca"]
 
   s.description   = %q{Input plugin for Fluentd for Juniper devices telemetry data streaming : Jvision / analyticsd etc ..}
   s.summary       = %q{Input plugin for Fluentd for Juniper devices telemetry data streaming : Jvision / analyticsd etc ..}
-  s.homepage      = "https://github.com/JNPRAutomate/fluentd-plugin-juniper-telemetry"
+  s.homepage      = "https://github.com/tech-mocha/fluentd-plugin-juniper-telemetry"
   s.license       = 'Apache 2.0'
 
   #s.files         = `git ls-files -z`.split("\x0").reject { |f| f.match(%r{^test/}) }
@@ -22,3 +22,4 @@ Gem::Specification.new do |s|
   s.add_runtime_dependency "protobuf"
   s.add_development_dependency "rake"
 end
+
