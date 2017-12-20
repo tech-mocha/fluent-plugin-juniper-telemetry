@@ -4,7 +4,7 @@ $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 
 Gem::Specification.new do |s|
   s.name          = "fluent-plugin-juniper-telemetry_tech-mocha"
-  s.version       = '0.4.1'
+  s.version       = '0.4.2'
   s.authors       = ["Tech Mocha"]
   s.email         = ["jag@openeye.ca"]
 
