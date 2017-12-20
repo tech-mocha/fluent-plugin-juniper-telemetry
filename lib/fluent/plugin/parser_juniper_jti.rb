@@ -16,6 +16,9 @@ require 'port_exp.pb'
 require 'protobuf'
 require 'qmon.pb'
 require 'logical_port.pb'
+require 'sr_stats_per_if_egress.pb'
+require 'sr_stats_per_if_ingress.pb'
+require 'sr_stats_per_sid.pb'
 require 'telemetry_top.pb'
 
 
@@ -99,6 +102,9 @@ module Fluent
                     
                     datas_sensors = jti_msg_json["enterprise"]["juniperNetworks"]
                     $log.debug "Extracted the following sensor data from device '#{device_name}': #{datas_sensors}"
+
+                    ## Uncomment for DEBUG ONLY!!
+                    #$log.warn "Extracted the following sensor data from device '#{device_name}': #{datas_sensors}"
                 rescue => e
                     $log.warn "Unable to extract sensor data sensor from jti_msg.enterprise.juniperNetworks, Error during processing: #{$!}"
                     $log.debug "Unable to extract sensor data sensor from jti_msg.enterprise.juniperNetworks, Data Dump : " + jti_msg.inspect.to_s
@@ -155,13 +161,6 @@ module Fluent
                                     elsif level_1_key == "counter_name"
                                         sensor_data.push({ 'counter_name' => level_1_value })
                                     else
-                                        # By default, InfluxDB assigns the type of a field based on the type of the first value inserted.
-                                        # So, in the "value" field, if an Integer is inserted, then the "value" field will only accept Integer
-                                        # values hereon after ... so, a String value insertion will result in an error.
-                                        # To alleviate this, we will have "value" as the default field for Integers, so as not to break existing code.
-                                        # We will add additional "value_string", "value_float", fields to support different value types.  This way,
-                                        # we can persist all the various telemetry sensor parameters in InfluxDB, not just the Integer values.
-                                        
                                         # Create local copy of 'sensor_data' variable.
                                         local_sensor_data = sensor_data.dup
                                         local_sensor_data = process_value(local_sensor_data, level_1_key, level_1_value, '')
@@ -183,6 +182,347 @@ module Fluent
                     
                     
                     
+                    #########################################################################
+                    ##  SENSOR:   /junos/services/segment-routing/interface/egress/usage/  ##
+                    #########################################################################
+                    elsif sensor == "jnpr_sr_stats_per_if_egress_ext"
+
+                        resource = "/junos/services/segment-routing/interface/egress/usage/"
+                        $log.debug  "Processing sensor '#{sensor}' with resource '#{resource}'"
+
+                        # At this point in the code, 'data_sensors' has the following value:
+=begin
+                        {
+                           "jnpr_sr_stats_per_if_egress_ext": {
+                              "per_if_records": [
+                                 {
+                                    "if_name": "et-1/1/0.0",
+                                    "counter_name": "oc-3847",
+                                    "egress_stats": {
+                                       "packets": 2878057633,
+                                       "bytes": 1387223773994,
+                                       "packet_rate": 20001,
+                                       "byte_rate": 9640765
+                                    }
+                                 }
+                              ]
+                           }
+                        }
+=end
+                        # Iterate over each record contained within the 'per_if_records' array ...
+                        datas_sensors[sensor]['per_if_records'].each do |datas|
+
+                            # Save all extracted sensor data in a list.
+                            sensor_data = []
+                            
+                            # Block to catch exceptions during sensor data parsing.
+                            begin
+
+                                # Add the device name to "sensor_data" for correlation purposes.
+                                sensor_data.push({ 'device' => device_name })
+                                
+                                # Each of the child elements under "per_if_records" is going to be either a "leaf" node (eg. Integer, String, Float, etc.)
+                                # or a "branch" node (eg. Array or Hash), in which case these branch sections need additional level of processing.
+                                # For the leaf nodes, these values can be written directly to "sensor_data"
+
+                                datas.each do |level_1_key, level_1_value|
+                                    # If the node currently being processed is a "branch node" (ie. it has child nodes)
+                                    if level_1_value.is_a?(Hash) || level_1_value.is_a?(Array)
+                                        
+                                        # From the proto file, we know that the level_1 branch nodes are all Hash values, so we can ignore the conditional
+                                        # below testing for an array
+                                        if level_1_value.is_a?(Array)
+                                            # Do nothing, as per reasons cited above.
+                                        # If the branch node is not an Array, then we can simply write the key/value pairs straight to "sensor_data".  
+                                        else
+                                            level_1_value.each do |level_2_key, level_2_value|                                                
+                                                ## For debug only ...
+                                                #$log.debug  "Value of 'level_2_key': '#{level_2_key}'"
+                                                #$log.debug  "Value of 'level_2_value': '#{level_2_value}'"
+                                                
+                                                # Create local copy of 'sensor_data' variable.
+                                                local_sensor_data = sensor_data.dup                                                
+                                                local_sensor_data = process_value(local_sensor_data, level_2_key, level_2_value, level_1_key)
+
+                                                record = build_record(output_format, local_sensor_data)
+                                                ## For debug only ...
+                                                #$log.debug  "Value of 'local_sensor_data': '#{local_sensor_data}'"
+                                                yield gpb_time, record
+                                            end
+                                        end
+
+                                    # If the node currently being processed is a "leaf node" (ie. it has NO child nodes)
+                                    else
+                                        
+                                        ## For debug only ...    
+                                        #$log.debug  "Value of 'level_1_key': '#{level_1_key}'"
+                                        #$log.debug  "Value of 'level_1_value': '#{level_1_value}'"
+                                        
+                                        if level_1_key == "if_name"
+                                            sensor_data.push({ 'interface' => level_1_value })
+                                        else
+                                            # Create local copy of 'sensor_data' variable.
+                                            local_sensor_data = sensor_data.dup
+                                            local_sensor_data = process_value(local_sensor_data, level_1_key, level_1_value, '')
+                                            
+                                            record = build_record(output_format, local_sensor_data)
+                                            ## For debug only ...
+                                            #$log.debug  "Value of 'local_sensor_data': '#{local_sensor_data}'"
+                                            #$log.debug  "Value of 'record': '#{record}'"
+                                            yield gpb_time, record
+                                        end
+                                    end
+                                end
+
+                            rescue => e
+                                $log.warn   "Unable to parse '" + sensor + "' sensor, Error during processing: #{$!}"
+                                $log.debug  "Unable to parse '" + sensor + "' sensor, Data Dump: " + datas.inspect.to_s
+                            end
+                        end
+
+
+
+
+                    ##########################################################################
+                    ##  SENSOR:   /junos/services/segment-routing/interface/ingress/usage/  ##
+                    ##########################################################################
+                    elsif sensor == "jnpr_sr_stats_per_if_ingress_ext"
+
+                        resource = "/junos/services/segment-routing/interface/ingress/usage/"
+                        $log.debug  "Processing sensor '#{sensor}' with resource '#{resource}'"
+
+                        # At this point in the code, 'data_sensors' has the following value:
+=begin
+                        {
+                           "jnpr_sr_stats_per_if_ingress_ext": {
+                              "per_if_records": [
+                                 {
+                                    "if_name": "xe-1/0/3:0.100",
+                                    "ingress_stats": {
+                                       "packets": 0,
+                                       "bytes": 0,
+                                       "packet_rate": 0,
+                                       "byte_rate": 0
+                                    }
+                                 },
+                                 ...
+                                 {
+                                    "if_name": "et-1/1/0.0",
+                                    "ingress_stats": {
+                                       "packets": 0,
+                                       "bytes": 0,
+                                       "packet_rate": 0,
+                                       "byte_rate": 0
+                                    }
+                                 }
+                              ]
+                           }
+                        }
+=end
+                        # Iterate over each record contained within the 'per_if_records' array ...
+                        datas_sensors[sensor]['per_if_records'].each do |datas|
+
+                            # Save all extracted sensor data in a list.
+                            sensor_data = []
+                            
+                            # Block to catch exceptions during sensor data parsing.
+                            begin
+
+                                # Add the device name to "sensor_data" for correlation purposes.
+                                sensor_data.push({ 'device' => device_name })
+                                
+                                # Each of the child elements under "per_if_records" is going to be either a "leaf" node (eg. Integer, String, Float, etc.)
+                                # or a "branch" node (eg. Array or Hash), in which case these branch sections need additional level of processing.
+                                # For the leaf nodes, these values can be written directly to "sensor_data"
+
+                                datas.each do |level_1_key, level_1_value|
+                                    # If the node currently being processed is a "branch node" (ie. it has child nodes)
+                                    if level_1_value.is_a?(Hash) || level_1_value.is_a?(Array)
+                                        
+                                        # From the proto file, we know that the level_1 branch nodes are all Hash values, so we can ignore the conditional
+                                        # below testing for an array
+                                        if level_1_value.is_a?(Array)
+                                            # Do nothing, as per reasons cited above.
+                                        # If the branch node is not an Array, then we can simply write the key/value pairs straight to "sensor_data".  
+                                        else
+                                            level_1_value.each do |level_2_key, level_2_value|                                                
+                                                ## For debug only ...
+                                                #$log.debug  "Value of 'level_2_key': '#{level_2_key}'"
+                                                #$log.debug  "Value of 'level_2_value': '#{level_2_value}'"
+                                                
+                                                # Create local copy of 'sensor_data' variable.
+                                                local_sensor_data = sensor_data.dup                                                
+                                                local_sensor_data = process_value(local_sensor_data, level_2_key, level_2_value, level_1_key)
+
+                                                record = build_record(output_format, local_sensor_data)
+                                                ## For debug only ...
+                                                #$log.debug  "Value of 'local_sensor_data': '#{local_sensor_data}'"
+                                                yield gpb_time, record
+                                            end
+                                        end
+
+                                    # If the node currently being processed is a "leaf node" (ie. it has NO child nodes)
+                                    else
+                                        
+                                        ## For debug only ...    
+                                        #$log.debug  "Value of 'level_1_key': '#{level_1_key}'"
+                                        #$log.debug  "Value of 'level_1_value': '#{level_1_value}'"
+                                        
+                                        if level_1_key == "if_name"
+                                            sensor_data.push({ 'interface' => level_1_value })
+                                        else
+                                            # Create local copy of 'sensor_data' variable.
+                                            local_sensor_data = sensor_data.dup
+                                            local_sensor_data = process_value(local_sensor_data, level_1_key, level_1_value, '')
+                                            
+                                            record = build_record(output_format, local_sensor_data)
+                                            ## For debug only ...
+                                            #$log.debug  "Value of 'local_sensor_data': '#{local_sensor_data}'"
+                                            #$log.debug  "Value of 'record': '#{record}'"
+                                            yield gpb_time, record
+                                        end
+                                    end
+                                end
+
+                            rescue => e
+                                $log.warn   "Unable to parse '" + sensor + "' sensor, Error during processing: #{$!}"
+                                $log.debug  "Unable to parse '" + sensor + "' sensor, Data Dump: " + datas.inspect.to_s
+                            end
+                        end
+
+
+
+
+                    #############################################################
+                    ##  SENSOR:   /junos/services/segment-routing/sid/usage/   ##
+                    #############################################################
+                    elsif sensor == "jnpr_sr_stats_per_sid_ext"
+
+                        resource = "/junos/services/segment-routing/sid/usage/"
+                        $log.debug  "Processing sensor '#{sensor}' with resource '#{resource}'"
+
+                        # At this point in the code, 'data_sensors' has the following value:
+=begin
+                        {
+                           "jnpr_sr_stats_per_sid_ext": {
+                              "sid_stats": [
+                                 {
+                                    "sid_identifier": "25",
+                                    "instance_identifier": 0,
+                                    "counter_name": "oc-4",
+                                    "ingress_stats": {
+                                       "packets": 0,
+                                       "bytes": 0,
+                                       "packet_rate": 0,
+                                       "byte_rate": 0
+                                    }
+                                 },
+                                 {
+                                    "sid_identifier": "16896",
+                                    "instance_identifier": 0,
+                                    "counter_name": "oc-5",
+                                    "ingress_stats": {
+                                       "packets": 0,
+                                       "bytes": 0,
+                                       "packet_rate": 0,
+                                       "byte_rate": 0
+                                    }
+                                 },
+                                 ...
+                                 {
+                                    "sid_identifier": "18957",
+                                    "instance_identifier": 0,
+                                    "counter_name": "oc-181",
+                                    "ingress_stats": {
+                                       "packets": 0,
+                                       "bytes": 0,
+                                       "packet_rate": 0,
+                                       "byte_rate": 0
+                                    }
+                                 },
+                                 {
+                                    "sid_identifier": "19213",
+                                    "instance_identifier": 0,
+                                    "counter_name": "oc-18"
+                                 }
+                              ]
+                           }
+                        }
+=end
+                        # Iterate over each record contained within the 'sid_stats' array ...
+                        datas_sensors[sensor]['sid_stats'].each do |datas|
+
+                            # Save all extracted sensor data in a list.
+                            sensor_data = []
+                            
+                            # Block to catch exceptions during sensor data parsing.
+                            begin
+
+                                # Add the device name to "sensor_data" for correlation purposes.
+                                sensor_data.push({ 'device' => device_name })
+                                
+                                # Each of the child elements under "per_if_records" is going to be either a "leaf" node (eg. Integer, String, Float, etc.)
+                                # or a "branch" node (eg. Array or Hash), in which case these branch sections need additional level of processing.
+                                # For the leaf nodes, these values can be written directly to "sensor_data"
+
+                                datas.each do |level_1_key, level_1_value|
+                                    # If the node currently being processed is a "branch node" (ie. it has child nodes)
+                                    if level_1_value.is_a?(Hash) || level_1_value.is_a?(Array)
+                                        
+                                        # From the proto file, we know that the level_1 branch nodes are all Hash values, so we can ignore the conditional
+                                        # below testing for an array
+                                        if level_1_value.is_a?(Array)
+                                            # Do nothing, as per reasons cited above.
+                                        # If the branch node is not an Array, then we can simply write the key/value pairs straight to "sensor_data".  
+                                        else
+                                            level_1_value.each do |level_2_key, level_2_value|                                                
+                                                ## For debug only ...
+                                                #$log.debug  "Value of 'level_2_key': '#{level_2_key}'"
+                                                #$log.debug  "Value of 'level_2_value': '#{level_2_value}'"
+                                                
+                                                # Create local copy of 'sensor_data' variable.
+                                                local_sensor_data = sensor_data.dup                                                
+                                                local_sensor_data = process_value(local_sensor_data, level_2_key, level_2_value, level_1_key)
+
+                                                record = build_record(output_format, local_sensor_data)
+                                                ## For debug only ...
+                                                #$log.debug  "Value of 'local_sensor_data': '#{local_sensor_data}'"
+                                                yield gpb_time, record
+                                            end
+                                        end
+
+                                    # If the node currently being processed is a "leaf node" (ie. it has NO child nodes)
+                                    else
+                                        
+                                        ## For debug only ...    
+                                        #$log.debug  "Value of 'level_1_key': '#{level_1_key}'"
+                                        #$log.debug  "Value of 'level_1_value': '#{level_1_value}'"
+                                        
+                                        if level_1_key == "sid_identifier"
+                                            sensor_data.push({ 'sid_identifier' => level_1_value })
+                                        else
+                                            # Create local copy of 'sensor_data' variable.
+                                            local_sensor_data = sensor_data.dup
+                                            local_sensor_data = process_value(local_sensor_data, level_1_key, level_1_value, '')
+                                            
+                                            record = build_record(output_format, local_sensor_data)
+                                            ## For debug only ...
+                                            #$log.debug  "Value of 'local_sensor_data': '#{local_sensor_data}'"
+                                            #$log.debug  "Value of 'record': '#{record}'"
+                                            yield gpb_time, record
+                                        end
+                                    end
+                                end
+
+                            rescue => e
+                                $log.warn   "Unable to parse '" + sensor + "' sensor, Error during processing: #{$!}"
+                                $log.debug  "Unable to parse '" + sensor + "' sensor, Data Dump: " + datas.inspect.to_s
+                            end
+                        end
+
+
+
+
                     ####################################################
                     ##  SENSOR:   /junos/system/linecard/cpu/memory/  ##
                     ####################################################
@@ -308,13 +648,6 @@ module Fluent
                                         if level_1_key == "name"
                                             sensor_data.push({ 'cpu_mem_partition_name' => level_1_value })
                                         else
-                                            # By default, InfluxDB assigns the type of a field based on the type of the first value inserted.
-                                            # So, in the "value" field, if an Integer is inserted, then the "value" field will only accept Integer
-                                            # values hereon after ... so, a String value insertion will result in an error.
-                                            # To alleviate this, we will have "value" as the default field for Integers, so as not to break existing code.
-                                            # We will add additional "value_string", "value_float", fields to support different value types.  This way,
-                                            # we can persist all the various telemetry sensor parameters in InfluxDB, not just the Integer values.
-                                            
                                             # Create local copy of 'sensor_data' variable.
                                             local_sensor_data = sensor_data.dup
                                             local_sensor_data = process_value(local_sensor_data, level_1_key, level_1_value, '')
@@ -696,13 +1029,6 @@ module Fluent
                                         elsif level_1_key == "init_time"
                                             # do nothing.
                                         else
-                                            # By default, InfluxDB assigns the type of a field based on the type of the first value inserted.
-                                            # So, in the "value" field, if an Integer is inserted, then the "value" field will only accept Integer
-                                            # values hereon after ... so, a String value insertion will result in an error.
-                                            # To alleviate this, we will have "value" as the default field for Integers, so as not to break existing code.
-                                            # We will add additional "value_string", "value_float", fields to support different value types.  This way,
-                                            # we can persist all the various telemetry sensor parameters in InfluxDB, not just the Integer values.
-                                            
                                             # Create local copy of 'sensor_data' variable.
                                             local_sensor_data = sensor_data.dup
                                             local_sensor_data = process_value(local_sensor_data, level_1_key, level_1_value, '')
@@ -871,13 +1197,6 @@ module Fluent
                                         elsif level_1_key == "init_time"
                                             # do nothing.
                                         else
-                                            # By default, InfluxDB assigns the type of a field based on the type of the first value inserted.
-                                            # So, in the "value" field, if an Integer is inserted, then the "value" field will only accept Integer
-                                            # values hereon after ... so, a String value insertion will result in an error.
-                                            # To alleviate this, we will have "value" as the default field for Integers, so as not to break existing code.
-                                            # We will add additional "value_string", "value_float", fields to support different value types.  This way,
-                                            # we can persist all the various telemetry sensor parameters in InfluxDB, not just the Integer values.
-                                            
                                             # Create local copy of 'sensor_data' variable.
                                             local_sensor_data = sensor_data.dup
                                             local_sensor_data = process_value(local_sensor_data, level_1_key, level_1_value, '')
@@ -1068,13 +1387,6 @@ module Fluent
                                         elsif level_1_key == "init_time"
                                             # do nothing.
                                         else
-                                            # By default, InfluxDB assigns the type of a field based on the type of the first value inserted.
-                                            # So, in the "value" field, if an Integer is inserted, then the "value" field will only accept Integer
-                                            # values hereon after ... so, a String value insertion will result in an error.
-                                            # To alleviate this, we will have "value" as the default field for Integers, so as not to break existing code.
-                                            # We will add additional "value_string", "value_float", fields to support different value types.  This way,
-                                            # we can persist all the various telemetry sensor parameters in InfluxDB, not just the Integer values.
-                                            
                                             # Create local copy of 'sensor_data' variable.
                                             local_sensor_data = sensor_data.dup
                                             local_sensor_data = process_value(local_sensor_data, level_1_key, level_1_value, '')
@@ -1105,6 +1417,13 @@ module Fluent
             
             def process_value(local_sensor_data, key, value, parent_key)
                 
+                # By default, InfluxDB assigns the type of a field based on the type of the first value inserted.
+                # So, in the "value" field, if an Integer is inserted, then the "value" field will only accept Integer
+                # values hereon after ... so, a String value insertion will result in an error.
+                # To alleviate this, we will have "value" as the default field for Integers, so as not to break existing code.
+                # We will add additional "value_string", "value_float", fields to support different value types.  This way,
+                # we can persist all the various telemetry sensor parameters in InfluxDB, not just the Integer values.
+
                 if value.is_a?(Integer)
                     if parent_key == ''
                         local_sensor_data.push({ 'type' => key })
